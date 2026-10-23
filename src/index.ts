@@ -171,17 +171,42 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
 
   function handleClick(event: MouseEvent): void {
     if (!enabled || !editMode || event.defaultPrevented) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
+    const rawTarget = event.target;
+    const target =
+      rawTarget instanceof Element
+        ? rawTarget
+        : rawTarget instanceof Node
+          ? rawTarget.parentElement
+          : null;
+    if (!target) return;
 
+    const candidates: { field: EditableField; element: Element }[] = [];
     for (const field of fieldsById.values()) {
       const element = elementFor(field);
       if (element && (element === target || element.contains(target))) {
-        event.preventDefault();
-        event.stopPropagation();
-        selectField(field);
-        return;
+        candidates.push({ field, element });
       }
+    }
+
+    if (candidates.length === 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (candidates.length > 1) {
+      candidates.sort((a, b) => {
+        if (a.element === b.element) return 0;
+        if (a.element.contains(b.element)) return 1;
+        if (b.element.contains(a.element)) return -1;
+        return 0;
+      });
+    }
+
+    const currentIndex = candidates.findIndex((c) => c.element === selectedElement);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % candidates.length : 0;
+    const match = candidates[nextIndex];
+    if (match) {
+      selectField(match.field);
     }
   }
 
