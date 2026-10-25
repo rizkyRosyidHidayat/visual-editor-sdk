@@ -23,6 +23,15 @@ export function isEditorMessage(value: unknown): value is EditorToChildMessage {
       return typeof value.enabled === "boolean";
     case "UPDATE_PREVIEW":
       return typeof value.id === "string" && typeof value.value === "string";
+    case "UPDATE_CONTENT": {
+      if (!isRecord(value.data)) return false;
+      if ("dataFiles" in value && value.dataFiles !== undefined) {
+        if (!Array.isArray(value.dataFiles) || !value.dataFiles.every((f) => typeof f === "string")) {
+          return false;
+        }
+      }
+      return true;
+    }
     case "RESTORE_PREVIEW":
       return typeof value.id === "string";
     default:

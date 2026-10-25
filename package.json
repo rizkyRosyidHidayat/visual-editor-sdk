@@ -1,6 +1,6 @@
 {
   "name": "visual-editor-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A secure, framework-agnostic SDK for selecting and preview-editing registered website content from a parent visual editor.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -11,23 +11,41 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "require": "./dist/server.cjs"
     }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
-  "keywords": ["visual-editor", "website-editor", "postmessage", "content-editing", "sdk"],
+  "keywords": [
+    "visual-editor",
+    "website-editor",
+    "postmessage",
+    "content-editing",
+    "sdk"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
+    "@types/node": "^26.6.5",
+    "happy-dom": "^15.11.7",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "happy-dom": "^15.11.7"
+    "vitest": "^2.1.8"
   }
 }
