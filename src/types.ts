@@ -17,15 +17,17 @@ export interface EditableField {
   /** Field type controls which values are accepted for preview updates and how content is replaced. */
   type: EditableFieldType;
   /** Human-readable label shown in the parent editor. */
-  label?: string;
+  label?: string | undefined;
+  /** Optional initial value to apply to the element when the SDK initializes. */
+  value?: string | undefined;
   /** Optional CSS selector; defaults to [data-ve-id="<id>"]. */
-  selector?: string;
+  selector?: string | undefined;
   /** Optional attribute to update for link/image/attribute/boolean/color fields. */
-  attribute?: string;
+  attribute?: string | undefined;
   /** Optional CSS style property to update for style/color fields (e.g. "color", "background-color"). */
-  styleProperty?: string;
+  styleProperty?: string | undefined;
   /** Optional maximum length for text values. */
-  maxLength?: number;
+  maxLength?: number | undefined;
 }
 
 export interface VisualEditorSdkOptions {
@@ -34,7 +36,11 @@ export interface VisualEditorSdkOptions {
   /** Stable site identifier provisioned by your application. */
   siteId: string;
   /** Editable fields supported by this page. Optional if elements with [data-ve-id] are in the DOM. */
-  fields?: EditableField[];
+  fields?: EditableField[] | undefined;
+  /** Optional initial field values applied to elements on initialization. */
+  initialData?: Record<string, string> | undefined;
+  /** Optional initial field values applied to elements on initialization (alias for initialData). */
+  data?: Record<string, string> | undefined;
   /** Optional paths of the JSON data files backing these fields. Sent to the parent in CONTENT_CHANGED messages so the server knows which files to update. */
   dataFiles?: string[];
   /** Optional options passed to writeContentToFiles when writing JSON data files on UPDATE_CONTENT. */

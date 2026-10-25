@@ -52,7 +52,7 @@ export function makeMessage<T extends ChildToEditorMessage["type"]>(
 }
 
 export function makeFieldPayload(
-  field: { id: string; type: FieldPayload["type"]; label?: string },
+  field: { id: string; type: FieldPayload["type"]; label?: string | undefined },
   value: string
 ): FieldPayload {
   return {

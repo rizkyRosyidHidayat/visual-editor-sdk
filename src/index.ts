@@ -127,11 +127,13 @@ function inferFieldFromElement(element: Element): EditableField | null {
   const label = element.getAttribute("data-ve-label") ?? id;
   const attribute = element.getAttribute("data-ve-attribute");
   const styleProperty = element.getAttribute("data-ve-style-prop");
+  const value = element.getAttribute("data-ve-value");
   const maxLengthAttr = element.getAttribute("data-ve-max-length");
   const parsedLength = maxLengthAttr ? parseInt(maxLengthAttr, 10) : undefined;
   const maxLength = typeof parsedLength === "number" && !Number.isNaN(parsedLength) ? parsedLength : undefined;
 
   const field: EditableField = { id, type, label };
+  if (value !== null) field.value = value;
   if (attribute !== null) field.attribute = attribute;
   if (styleProperty !== null) field.styleProperty = styleProperty;
   if (maxLength !== undefined) field.maxLength = maxLength;
@@ -700,7 +702,61 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     originalValues.delete(id);
   }
 
+  function applyInitialValues(): void {
+    for (const field of fieldsById.values()) {
+      const element = elementFor(field);
+      if (!element) continue;
+
+      const initialVal =
+        options.initialData?.[field.id] ??
+        options.data?.[field.id] ??
+        field.value ??
+        element.getAttribute("data-ve-value") ??
+        undefined;
+
+      const valToApply = initialVal !== undefined ? initialVal : currentValue(element, field);
+      if (initialVal !== undefined) {
+        recordOriginal(field, element);
+      }
+      try {
+        applyValue(element, field, valToApply);
+      } catch {
+        // Ignore initial formatting mismatch errors
+      }
+    }
+
+    const autoElements = Array.from(document.querySelectorAll("[data-ve-id]"));
+    for (const el of autoElements) {
+      const id = el.getAttribute("data-ve-id");
+      if (!id || fieldsById.has(id)) continue;
+      const inferred = inferFieldFromElement(el);
+      if (!inferred) continue;
+      boundElements.set(id, el);
+
+      const initialVal =
+        options.initialData?.[id] ??
+        options.data?.[id] ??
+        inferred.value ??
+        el.getAttribute("data-ve-value") ??
+        undefined;
+
+      const valToApply = initialVal !== undefined ? initialVal : currentValue(el, inferred);
+      if (initialVal !== undefined) {
+        recordOriginal(inferred, el);
+      }
+      try {
+        applyValue(el, inferred, valToApply);
+      } catch {
+        // Ignore initial formatting mismatch errors
+      }
+    }
+  }
+
+  // Execute applyValue when first initializing visual editor
+  applyInitialValues();
+
   function handleReady(): void {
+    applyInitialValues();
     send(makeMessage("EDITOR_READY", {
       siteId: options.siteId,
       fields: allPayloads()
