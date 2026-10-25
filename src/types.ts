@@ -1,16 +1,29 @@
-export type EditableFieldType = "text" | "textarea" | "link" | "image";
+export type EditableFieldType =
+  | "text"
+  | "textarea"
+  | "html"
+  | "richtext"
+  | "link"
+  | "image"
+  | "color"
+  | "style"
+  | "boolean"
+  | "toggle"
+  | "attribute";
 
 export interface EditableField {
   /** Stable identifier unique within the page, e.g. "home.hero.title". */
   id: string;
-  /** Field type controls which values are accepted for preview updates. */
+  /** Field type controls which values are accepted for preview updates and how content is replaced. */
   type: EditableFieldType;
   /** Human-readable label shown in the parent editor. */
   label?: string;
   /** Optional CSS selector; defaults to [data-ve-id="<id>"]. */
   selector?: string;
-  /** Optional attribute to update for link/image fields. */
-  attribute?: "href" | "src" | "alt";
+  /** Optional attribute to update for link/image/attribute/boolean/color fields. */
+  attribute?: string;
+  /** Optional CSS style property to update for style/color fields (e.g. "color", "background-color"). */
+  styleProperty?: string;
   /** Optional maximum length for text values. */
   maxLength?: number;
 }
@@ -20,8 +33,8 @@ export interface VisualEditorSdkOptions {
   editorOrigin: string;
   /** Stable site identifier provisioned by your application. */
   siteId: string;
-  /** Editable fields supported by this page. */
-  fields: EditableField[];
+  /** Editable fields supported by this page. Optional if elements with [data-ve-id] are in the DOM. */
+  fields?: EditableField[];
   /** Optional paths of the JSON data files backing these fields. Sent to the parent in CONTENT_CHANGED messages so the server knows which files to update. */
   dataFiles?: string[];
   /** Optional options passed to writeContentToFiles when writing JSON data files on UPDATE_CONTENT. */
