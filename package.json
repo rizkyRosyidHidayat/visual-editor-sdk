@@ -1,6 +1,6 @@
 {
   "name": "visual-editor-sdk",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A secure, framework-agnostic SDK for selecting and preview-editing registered website content from a parent visual editor.",
   "type": "module",
   "main": "./dist/index.cjs",
