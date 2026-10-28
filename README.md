@@ -73,37 +73,16 @@ const sdk = initVisualEditor({
  // sdk.destroy();
 ```
 
-### DOM Auto-Discovery and Field Types
-
-`fields` in `initVisualEditor` is optional. The SDK automatically discovers any DOM elements with `data-ve-id` and infers their field type from their HTML tag or `data-ve-type` attribute.
-
-Supported field types and replacement behaviors:
-
-| Field Type | Target / Replacement Behavior | HTML Tag Inference / Attributes |
-|---|---|---|
-| `text` | Sets `textContent` (or `.value` for `<input>`) | Default for most elements, or `<input type="text">` |
-| `textarea` | Sets `textContent` (or `.value` for `<textarea>`) | `<textarea>` or `data-ve-type="textarea"` |
-| `html` / `richtext` | Sets `innerHTML` | `data-ve-type="html"` or `data-ve-type="richtext"` |
-| `image` | Sets `src` (or `srcset` on `<source>`, or `style.backgroundImage` on non-media elements) | `<img>`, `<source>`, `<video>`, `<audio>`, or `data-ve-type="image"` |
-| `link` | Sets `href` attribute | `<a>` or `data-ve-type="link"` |
-| `color` | Sets `style.color` or `style[styleProperty]` (or `.value` for `<input type="color">`) | `<input type="color">` or `data-ve-type="color"` |
-| `style` | Sets CSS style property via `style.setProperty(prop, val)` | `data-ve-type="style" data-ve-style-prop="..."` |
-| `boolean` / `toggle` | Toggles `.checked` on checkbox/radio, attribute presence, or `hidden` | `<input type="checkbox">` or `data-ve-type="boolean"` |
-| `attribute` | Sets custom attribute via `element.setAttribute(...)` | `data-ve-type="attribute" data-ve-attribute="..."` |
-
-Example markup with markers:
+Add matching markers to the rendered page:
 
 ```html
 <h1 data-ve-id="home.hero.title">Build Better Digital Experiences</h1>
-<p data-ve-id="home.hero.description" data-ve-type="textarea">We help businesses grow.</p>
-<div data-ve-id="home.rich" data-ve-type="html"><p>Rich <strong>formatted</strong> content.</p></div>
+<p data-ve-id="home.hero.description">We help businesses grow.</p>
 <a data-ve-id="home.hero.cta" href="/contact">Get started</a>
 <img data-ve-id="home.hero.image" src="/images/hero.webp" alt="Team at work">
-<div data-ve-id="home.banner-bg" data-ve-type="image" style="background-image: url('/images/hero.jpg');"></div>
-<button data-ve-id="home.btn" data-ve-type="attribute" data-ve-attribute="aria-label" aria-label="Action">Click</button>
-<div data-ve-id="home.accent" data-ve-type="color" data-ve-style-prop="background-color">Accent</div>
-<div data-ve-id="home.banner" data-ve-type="boolean" data-ve-attribute="data-visible" data-visible>Active Banner</div>
 ```
+
+The selector must identify the intended element. IDs must be stable and unique within the page. For text and textarea fields, the SDK uses `textContent`, not HTML, so values cannot inject markup.
 
 ## 2. Parent editor: receive selection and update preview
 

@@ -1,7 +1,6 @@
 import type {
   ContentChangedPayload,
   EditableField,
-  EditableFieldType,
   FieldPayload,
   VisualEditorSdk,
   VisualEditorSdkOptions,
@@ -23,20 +22,6 @@ export type {
 } from "./types.js";
 export { writeContentToFiles } from "./server.js";
 
-export const SUPPORTED_FIELD_TYPES: readonly EditableFieldType[] = [
-  "text",
-  "textarea",
-  "html",
-  "richtext",
-  "link",
-  "image",
-  "color",
-  "style",
-  "boolean",
-  "toggle",
-  "attribute"
-] as const;
-
 const DEFAULT_SELECTED_ATTRIBUTE = "data-ve-selected";
 const DEFAULT_EDIT_MODE_ATTRIBUTE = "data-ve-edit-mode";
 
@@ -56,27 +41,19 @@ function normalizeOrigin(origin: string): string {
   return parsed.origin;
 }
 
-function escapeSelectorId(id: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(id);
+function validateFields(fields: EditableField[]): Map<string, EditableField> {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    throw new Error("Visual Editor SDK requires a non-empty fields array.");
   }
-  return id.replace(/["\\]/g, "\\$&");
-}
 
-function validateFields(fields?: EditableField[]): Map<string, EditableField> {
   const map = new Map<string, EditableField>();
-  if (!fields) return map;
-  if (!Array.isArray(fields)) {
-    throw new Error("Visual Editor SDK requires fields to be an array when provided.");
-  }
-
   for (const field of fields) {
     if (!field || typeof field.id !== "string" || !field.id.trim()) {
       throw new Error("Each editable field must have a non-empty id.");
     }
     if (map.has(field.id)) throw new Error(`Duplicate editable field id: ${field.id}`);
-    if (!SUPPORTED_FIELD_TYPES.includes(field.type)) {
-      throw new Error(`Unsupported field type "${field.type}" for "${field.id}".`);
+    if (!["text", "textarea", "link", "image"].includes(field.type)) {
+      throw new Error(`Unsupported field type for "${field.id}".`);
     }
     if (field.selector && field.selector.length > 500) {
       throw new Error(`Selector is too long for "${field.id}".`);
@@ -84,59 +61,6 @@ function validateFields(fields?: EditableField[]): Map<string, EditableField> {
     map.set(field.id, field);
   }
   return map;
-}
-
-function inferFieldFromElement(element: Element): EditableField | null {
-  const id = element.getAttribute("data-ve-id");
-  if (!id || !id.trim()) return null;
-
-  const rawType = element.getAttribute("data-ve-type");
-  let type: EditableFieldType;
-  if (rawType && (SUPPORTED_FIELD_TYPES as readonly string[]).includes(rawType)) {
-    type = rawType as EditableFieldType;
-  } else {
-    const tag = element.tagName.toUpperCase();
-    if (tag === "IMG") {
-      type = "image";
-    } else if (tag === "A") {
-      type = "link";
-    } else if (tag === "TEXTAREA") {
-      type = "textarea";
-    } else if (tag === "INPUT") {
-      const inputType = (element.getAttribute("type") ?? "text").toLowerCase();
-      if (inputType === "checkbox" || inputType === "radio") {
-        type = "boolean";
-      } else if (inputType === "color") {
-        type = "color";
-      } else if (inputType === "image") {
-        type = "image";
-      } else {
-        type = "text";
-      }
-    } else if (tag === "VIDEO" || tag === "AUDIO" || tag === "SOURCE") {
-      type = "image";
-    } else if (element.hasAttribute("data-ve-attribute")) {
-      type = "attribute";
-    } else if (element.hasAttribute("data-ve-style-prop")) {
-      type = "style";
-    } else {
-      type = "text";
-    }
-  }
-
-  const label = element.getAttribute("data-ve-label") ?? id;
-  const attribute = element.getAttribute("data-ve-attribute");
-  const styleProperty = element.getAttribute("data-ve-style-prop");
-  const maxLengthAttr = element.getAttribute("data-ve-max-length");
-  const parsedLength = maxLengthAttr ? parseInt(maxLengthAttr, 10) : undefined;
-  const maxLength = typeof parsedLength === "number" && !Number.isNaN(parsedLength) ? parsedLength : undefined;
-
-  const field: EditableField = { id, type, label };
-  if (attribute !== null) field.attribute = attribute;
-  if (styleProperty !== null) field.styleProperty = styleProperty;
-  if (maxLength !== undefined) field.maxLength = maxLength;
-
-  return field;
 }
 
 function safeQuery(root: ParentNode, selector: string): Element | null {
@@ -147,83 +71,12 @@ function safeQuery(root: ParentNode, selector: string): Element | null {
   }
 }
 
-function resolveAttribute(element: Element, field: EditableField): string {
-  if (field.attribute) return field.attribute;
-  if (field.type === "link") return "href";
-  if (field.type === "image") {
-    return element.tagName.toUpperCase() === "SOURCE" ? "srcset" : "src";
-  }
-  if (field.type === "attribute") return "data-value";
-  return "";
-}
-
-function resolveStyleProperty(field: EditableField): string {
-  return field.styleProperty ?? (field.attribute as string) ?? (field.type === "color" ? "color" : "display");
-}
-
-function isBackgroundImage(element: Element, field: EditableField): boolean {
-  if (field.type !== "image") return false;
-  if (field.styleProperty === "backgroundImage" || field.attribute === "background-image") return true;
-  const tag = element.tagName.toUpperCase();
-  const isMediaTag = tag === "IMG" || tag === "SOURCE" || tag === "VIDEO" || tag === "AUDIO";
-  return !isMediaTag && !field.attribute && !element.hasAttribute("src");
-}
-
 function currentValue(element: Element, field: EditableField): string {
-  switch (field.type) {
-    case "text":
-    case "textarea": {
-      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-        return element.value;
-      }
-      return element.textContent ?? "";
-    }
-    case "html":
-    case "richtext": {
-      return element.innerHTML ?? "";
-    }
-    case "image": {
-      if (isBackgroundImage(element, field)) {
-        const bg = (element as HTMLElement).style?.backgroundImage ?? "";
-        const match = /url\(['"]?(.*?)['"]?\)/i.exec(bg);
-        const extracted = match?.[1];
-        return extracted !== undefined ? extracted : bg;
-      }
-      const attr = resolveAttribute(element, field);
-      return element.getAttribute(attr) ?? "";
-    }
-    case "link":
-    case "attribute": {
-      const attr = resolveAttribute(element, field);
-      return element.getAttribute(attr) ?? "";
-    }
-    case "color": {
-      if (element instanceof HTMLInputElement && element.type === "color") {
-        return element.value;
-      }
-      if (field.attribute && !field.styleProperty && element.hasAttribute(field.attribute)) {
-        return element.getAttribute(field.attribute) ?? "";
-      }
-      const prop = resolveStyleProperty(field);
-      const htmlEl = element as HTMLElement;
-      return htmlEl.style?.getPropertyValue(prop) || (htmlEl.style as any)?.[prop] || "";
-    }
-    case "style": {
-      const prop = resolveStyleProperty(field);
-      const htmlEl = element as HTMLElement;
-      return htmlEl.style?.getPropertyValue(prop) || (htmlEl.style as any)?.[prop] || "";
-    }
-    case "boolean":
-    case "toggle": {
-      if (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) {
-        return String(element.checked);
-      }
-      if (field.attribute) {
-        return String(element.hasAttribute(field.attribute));
-      }
-      return String(!element.hasAttribute("hidden"));
-    }
+  if (field.type === "link" || field.type === "image") {
+    const attribute = field.attribute ?? (field.type === "link" ? "href" : "src");
+    return element.getAttribute(attribute) ?? "";
   }
+  return element.textContent ?? "";
 }
 
 function applyValue(element: Element, field: EditableField, value: string): void {
@@ -231,98 +84,20 @@ function applyValue(element: Element, field: EditableField, value: string): void
     throw new Error(`Value exceeds maxLength for "${field.id}".`);
   }
 
-  switch (field.type) {
-    case "text":
-    case "textarea": {
-      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-        element.value = value;
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      } else {
-        element.textContent = value;
+  if (field.type === "link" || field.type === "image") {
+    const attribute = field.attribute ?? (field.type === "link" ? "href" : "src");
+    if (attribute === "href" || attribute === "src") {
+      const trimmed = value.trim();
+      if (trimmed && !/^(https?:|mailto:|tel:|\/|#)/i.test(trimmed)) {
+        throw new Error(`Unsupported URL scheme for "${field.id}".`);
       }
-      break;
     }
-    case "html":
-    case "richtext": {
-      element.innerHTML = value;
-      break;
-    }
-    case "image": {
-      if (isBackgroundImage(element, field)) {
-        const trimmed = value.trim();
-        if (trimmed && !/^(https?:|data:|\/|#|\.|\w)/i.test(trimmed)) {
-          throw new Error(`Unsupported URL scheme for "${field.id}".`);
-        }
-        (element as HTMLElement).style.backgroundImage = value ? `url("${value}")` : "";
-        return;
-      }
-      const attr = resolveAttribute(element, field);
-      if (attr === "src" || attr === "srcset") {
-        const trimmed = value.trim();
-        if (trimmed && !/^(https?:|data:|\/|#|\.)/i.test(trimmed)) {
-          throw new Error(`Unsupported URL scheme for "${field.id}".`);
-        }
-      }
-      element.setAttribute(attr, value);
-      break;
-    }
-    case "link": {
-      const attr = resolveAttribute(element, field);
-      if (attr === "href") {
-        const trimmed = value.trim();
-        if (trimmed && !/^(https?:|mailto:|tel:|\/|#)/i.test(trimmed)) {
-          throw new Error(`Unsupported URL scheme for "${field.id}".`);
-        }
-      }
-      element.setAttribute(attr, value);
-      break;
-    }
-    case "attribute": {
-      const attr = resolveAttribute(element, field);
-      element.setAttribute(attr, value);
-      break;
-    }
-    case "color": {
-      if (element instanceof HTMLInputElement && element.type === "color") {
-        element.value = value;
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      } else if (field.attribute && !field.styleProperty && element.hasAttribute(field.attribute)) {
-        element.setAttribute(field.attribute, value);
-      } else {
-        const prop = resolveStyleProperty(field);
-        (element as HTMLElement).style.setProperty(prop, value);
-      }
-      break;
-    }
-    case "style": {
-      const prop = resolveStyleProperty(field);
-      if (value === "") {
-        (element as HTMLElement).style.removeProperty(prop);
-      } else {
-        (element as HTMLElement).style.setProperty(prop, value);
-      }
-      break;
-    }
-    case "boolean":
-    case "toggle": {
-      const isTrue = value === "true" || value === "1" || value === "on";
-      if (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) {
-        element.checked = isTrue;
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      } else if (field.attribute) {
-        if (isTrue) {
-          element.setAttribute(field.attribute, value === "true" || value === "1" ? "" : value);
-        } else {
-          element.removeAttribute(field.attribute);
-        }
-      } else {
-        element.toggleAttribute("hidden", !isTrue);
-      }
-      break;
-    }
+    element.setAttribute(attribute, value);
+    return;
   }
+
+  // Plain text only: never interpret editor values as HTML.
+  element.textContent = value;
 }
 
 export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorSdk {
@@ -344,23 +119,12 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
   let selectedElement: Element | null = null;
 
   const originalValues = new Map<string, string>();
-  const originalAttributes = new Map<string, { attribute: string; value: string | null }>();
-  const originalStyles = new Map<string, { property: string; value: string | null }>();
-  const originalInputValues = new Map<string, string>();
-  const originalChecked = new Map<string, boolean>();
+  const originalAttributes = new Map<string, string | null>();
   const boundElements = new Map<string, Element>();
   const previousOutlineValues = new Map<Element, string | null>();
 
-  function getField(id: string): EditableField | null {
-    const configured = fieldsById.get(id);
-    if (configured) return configured;
-    const element = safeQuery(document, `[data-ve-id="${escapeSelectorId(id)}"]`);
-    if (element) return inferFieldFromElement(element);
-    return null;
-  }
-
   function elementFor(field: EditableField): Element | null {
-    const selector = field.selector ?? `[data-ve-id="${escapeSelectorId(field.id)}"]`;
+    const selector = field.selector ?? `[data-ve-id="${CSS.escape(field.id)}"]`;
     const element = safeQuery(document, selector);
     if (!element) return null;
     boundElements.set(field.id, element);
@@ -375,55 +139,21 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
 
   function allPayloads(): FieldPayload[] {
     const payloads: FieldPayload[] = [];
-    const seenIds = new Set<string>();
-
     for (const field of fieldsById.values()) {
       const payload = payloadFor(field);
-      if (payload) {
-        payloads.push(payload);
-        seenIds.add(field.id);
-      }
+      if (payload) payloads.push(payload);
     }
-
-    const autoElements = Array.from(document.querySelectorAll("[data-ve-id]"));
-    for (const el of autoElements) {
-      const id = el.getAttribute("data-ve-id");
-      if (!id || seenIds.has(id)) continue;
-      const inferred = inferFieldFromElement(el);
-      if (inferred) {
-        boundElements.set(id, el);
-        payloads.push(makeFieldPayload(inferred, currentValue(el, inferred)));
-        seenIds.add(id);
-      }
-    }
-
     return payloads;
   }
 
   function collectCurrentData(): Record<string, string> {
     const data: Record<string, string> = {};
-    const seenIds = new Set<string>();
-
     for (const field of fieldsById.values()) {
       const element = elementFor(field);
       if (element) {
         data[field.id] = currentValue(element, field);
-        seenIds.add(field.id);
       }
     }
-
-    const autoElements = Array.from(document.querySelectorAll("[data-ve-id]"));
-    for (const el of autoElements) {
-      const id = el.getAttribute("data-ve-id");
-      if (!id || seenIds.has(id)) continue;
-      const inferred = inferFieldFromElement(el);
-      if (inferred) {
-        boundElements.set(id, el);
-        data[id] = currentValue(el, inferred);
-        seenIds.add(id);
-      }
-    }
-
     return data;
   }
 
@@ -453,7 +183,7 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
   }
 
   function selectField(field: EditableField): void {
-    const element = boundElements.get(field.id) ?? elementFor(field);
+    const element = elementFor(field);
     if (!element) return;
     restoreSelectionOutline();
     selectedElement = element;
@@ -476,26 +206,11 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     if (!target) return;
 
     const candidates: { field: EditableField; element: Element }[] = [];
-    const seenElements = new Set<Element>();
-
     for (const field of fieldsById.values()) {
       const element = elementFor(field);
       if (element && (element === target || element.contains(target))) {
         candidates.push({ field, element });
-        seenElements.add(element);
       }
-    }
-
-    let current: Element | null = target;
-    while (current && current !== document.body && current !== document.documentElement) {
-      if (current.hasAttribute("data-ve-id") && !seenElements.has(current)) {
-        const inferred = inferFieldFromElement(current);
-        if (inferred) {
-          candidates.push({ field: inferred, element: current });
-          seenElements.add(current);
-        }
-      }
-      current = current.parentElement;
     }
 
     if (candidates.length === 0) return;
@@ -520,55 +235,6 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     }
   }
 
-  function recordOriginal(field: EditableField, element: Element): void {
-    if (originalValues.has(field.id)) return;
-
-    originalValues.set(field.id, currentValue(element, field));
-
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-      if (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) {
-        originalChecked.set(field.id, element.checked);
-      } else {
-        originalInputValues.set(field.id, element.value);
-      }
-    }
-
-    if (isBackgroundImage(element, field)) {
-      originalStyles.set(field.id, {
-        property: "background-image",
-        value: (element as HTMLElement).style?.getPropertyValue("background-image") || null
-      });
-    } else if (
-      field.type === "link" ||
-      field.type === "image" ||
-      field.type === "attribute" ||
-      ((field.type === "boolean" || field.type === "toggle") && field.attribute)
-    ) {
-      const attr = resolveAttribute(element, field);
-      if (attr) {
-        originalAttributes.set(field.id, {
-          attribute: attr,
-          value: element.getAttribute(attr)
-        });
-      }
-    } else if (field.type === "style" || field.type === "color") {
-      if (element instanceof HTMLInputElement && element.type === "color") {
-        // already recorded in originalInputValues
-      } else if (field.attribute && !field.styleProperty && element.hasAttribute(field.attribute)) {
-        originalAttributes.set(field.id, {
-          attribute: field.attribute,
-          value: element.getAttribute(field.attribute)
-        });
-      } else {
-        const prop = resolveStyleProperty(field);
-        originalStyles.set(field.id, {
-          property: prop,
-          value: (element as HTMLElement).style?.getPropertyValue(prop) || null
-        });
-      }
-    }
-  }
-
   async function handleMessage(event: MessageEvent): Promise<void> {
     if (!enabled) return;
     if (event.origin !== editorOrigin) return;
@@ -587,12 +253,18 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
           if (!editMode) restoreSelectionOutline();
           break;
         case "UPDATE_PREVIEW": {
-          const field = getField(message.id);
+          const field = fieldsById.get(message.id);
           if (!field) throw new Error(`Unknown field id: ${message.id}`);
-          const element = boundElements.get(message.id) ?? elementFor(field);
+          const element = elementFor(field);
           if (!element) throw new Error(`Element not found for field: ${message.id}`);
 
-          recordOriginal(field, element);
+          if (!originalValues.has(field.id)) {
+            originalValues.set(field.id, currentValue(element, field));
+            if (field.type === "link" || field.type === "image") {
+              const attr = field.attribute ?? (field.type === "link" ? "href" : "src");
+              originalAttributes.set(field.id, element.getAttribute(attr));
+            }
+          }
           applyValue(element, field, message.value);
           options.onPreviewUpdate?.(field, message.value);
           emitContentChanged();
@@ -602,11 +274,17 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
           const entries = Object.entries(message.data);
           for (const [id, value] of entries) {
             if (typeof value !== "string") continue;
-            const field = getField(id);
+            const field = fieldsById.get(id);
             if (!field) continue;
-            const element = boundElements.get(id) ?? elementFor(field);
+            const element = elementFor(field);
             if (!element) continue;
-            recordOriginal(field, element);
+            if (!originalValues.has(field.id)) {
+              originalValues.set(field.id, currentValue(element, field));
+              if (field.type === "link" || field.type === "image") {
+                const attr = field.attribute ?? (field.type === "link" ? "href" : "src");
+                originalAttributes.set(field.id, element.getAttribute(attr));
+              }
+            }
             applyValue(element, field, value);
             options.onPreviewUpdate?.(field, value);
           }
@@ -643,60 +321,23 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
   }
 
   function restoreOne(id: string): void {
-    const field = getField(id);
+    const field = fieldsById.get(id);
     const element = boundElements.get(id) ?? (field ? elementFor(field) : null);
     if (!field || !element || !originalValues.has(id)) return;
 
     const original = originalValues.get(id)!;
-
-    if (originalChecked.has(id)) {
-      (element as HTMLInputElement).checked = originalChecked.get(id)!;
-      originalChecked.delete(id);
-    }
-
-    if (originalInputValues.has(id)) {
-      (element as HTMLInputElement | HTMLTextAreaElement).value = originalInputValues.get(id)!;
-      originalInputValues.delete(id);
-    }
-
-    if (originalStyles.has(id)) {
-      const { property, value } = originalStyles.get(id)!;
-      if (value === null || value === "") {
-        (element as HTMLElement).style?.removeProperty(property);
+    if (field.type === "link" || field.type === "image") {
+      const attr = field.attribute ?? (field.type === "link" ? "href" : "src");
+      const originalAttr = originalAttributes.get(id);
+      if (originalAttr === null || originalAttr === undefined) {
+        element.removeAttribute(attr);
       } else {
-        (element as HTMLElement).style?.setProperty(property, value);
-      }
-      originalStyles.delete(id);
-    }
-
-    if (originalAttributes.has(id)) {
-      const { attribute, value } = originalAttributes.get(id)!;
-      if (value === null) {
-        element.removeAttribute(attribute);
-      } else {
-        element.setAttribute(attribute, value);
+        element.setAttribute(attr, originalAttr);
       }
       originalAttributes.delete(id);
-    }
-
-    if (field.type === "html" || field.type === "richtext") {
-      element.innerHTML = original;
-    } else if (field.type === "boolean" || field.type === "toggle") {
-      if (!field.attribute && !(element instanceof HTMLInputElement)) {
-        element.toggleAttribute("hidden", original === "false");
-      }
-    } else if (
-      !(element instanceof HTMLInputElement) &&
-      !(element instanceof HTMLTextAreaElement) &&
-      field.type !== "link" &&
-      field.type !== "image" &&
-      field.type !== "style" &&
-      field.type !== "color" &&
-      field.type !== "attribute"
-    ) {
+    } else {
       element.textContent = original;
     }
-
     originalValues.delete(id);
   }
 
