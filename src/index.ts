@@ -1,26 +1,20 @@
 import type {
-  ContentChangedPayload,
   EditableField,
   FieldPayload,
   VisualEditorSdk,
-  VisualEditorSdkOptions,
-  WriteContentOptions
+  VisualEditorSdkOptions
 } from "./types.js";
 import { isEditorMessage, makeFieldPayload, makeMessage } from "./protocol.js";
-import { writeContentToFiles } from "./server.js";
 
 export type {
-  ContentChangedPayload,
   EditableField,
   EditableFieldType,
   EditorToChildMessage,
   ChildToEditorMessage,
   FieldPayload,
   VisualEditorSdk,
-  VisualEditorSdkOptions,
-  WriteContentOptions
+  VisualEditorSdkOptions
 } from "./types.js";
-export { writeContentToFiles } from "./server.js";
 
 const DEFAULT_SELECTED_ATTRIBUTE = "data-ve-selected";
 const DEFAULT_EDIT_MODE_ATTRIBUTE = "data-ve-edit-mode";
@@ -146,25 +140,6 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     return payloads;
   }
 
-  function collectCurrentData(): Record<string, string> {
-    const data: Record<string, string> = {};
-    for (const field of fieldsById.values()) {
-      const element = elementFor(field);
-      if (element) {
-        data[field.id] = currentValue(element, field);
-      }
-    }
-    return data;
-  }
-
-  function emitContentChanged(): void {
-    const data = collectCurrentData();
-    const payload: Record<string, unknown> = { siteId: options.siteId, data };
-    if (options.dataFiles && options.dataFiles.length > 0) payload.dataFiles = options.dataFiles;
-    send(makeMessage("CONTENT_CHANGED", payload as { siteId: string; data: Record<string, string>; dataFiles?: string[] }));
-    options.onContentChanged?.(data, options.dataFiles);
-  }
-
   function send(message: Parameters<typeof window.parent.postMessage>[0]): void {
     if (!enabled) return;
     window.parent.postMessage(message, editorOrigin);
@@ -235,7 +210,7 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     }
   }
 
-  async function handleMessage(event: MessageEvent): Promise<void> {
+  function handleMessage(event: MessageEvent): void {
     if (!enabled) return;
     if (event.origin !== editorOrigin) return;
     if (event.source !== window.parent) return;
@@ -267,40 +242,6 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
           }
           applyValue(element, field, message.value);
           options.onPreviewUpdate?.(field, message.value);
-          emitContentChanged();
-          break;
-        }
-        case "UPDATE_CONTENT": {
-          const entries = Object.entries(message.data);
-          for (const [id, value] of entries) {
-            if (typeof value !== "string") continue;
-            const field = fieldsById.get(id);
-            if (!field) continue;
-            const element = elementFor(field);
-            if (!element) continue;
-            if (!originalValues.has(field.id)) {
-              originalValues.set(field.id, currentValue(element, field));
-              if (field.type === "link" || field.type === "image") {
-                const attr = field.attribute ?? (field.type === "link" ? "href" : "src");
-                originalAttributes.set(field.id, element.getAttribute(attr));
-              }
-            }
-            applyValue(element, field, value);
-            options.onPreviewUpdate?.(field, value);
-          }
-          const targetFiles = (Array.isArray(message.dataFiles) && message.dataFiles.length > 0)
-            ? message.dataFiles
-            : options.dataFiles;
-          if (targetFiles && targetFiles.length > 0) {
-            await writeContentToFiles(
-              {
-                data: { ...collectCurrentData(), ...message.data },
-                dataFiles: targetFiles
-              },
-              options.writeOptions
-            );
-          }
-          emitContentChanged();
           break;
         }
         case "RESTORE_PREVIEW":
@@ -378,9 +319,6 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     },
     getFields() {
       return allPayloads();
-    },
-    getCurrentData() {
-      return collectCurrentData();
     }
   };
 }
