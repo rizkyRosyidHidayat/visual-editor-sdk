@@ -59,10 +59,23 @@ const sdk = initVisualEditor({
       label: "Hero image",
       selector: '[data-ve-id="home.hero.image"]',
       attribute: "src"
+    },
+    // Database-backed section (articles, plans, team, products, etc.)
+    {
+      id: "home.articles",
+      type: "data",
+      label: "Articles Section",
+      collection: "articles", // database collection or table identifier
+      selector: '[data-ve-id="home.articles"]',
+      itemSelector: '[data-ve-item-id]', // defaults to [data-ve-item-id]
+      itemIdAttribute: 'data-ve-item-id' // defaults to data-ve-item-id
     }
   ],
-  onSelect(field, value) {
-    console.log("Selected", field.id, value);
+  onSelect(field, value, itemContext) {
+    console.log("Selected field", field.id, value, itemContext);
+  },
+  onSelectItem(field, itemId, element) {
+    console.log("Selected item:", itemId, "in section:", field.id);
   },
   onError(error) {
     console.error("[visual-editor-sdk]", error);
@@ -70,7 +83,7 @@ const sdk = initVisualEditor({
 });
 
 // If this SPA unmounts the page/integration, call:
- // sdk.destroy();
+// sdk.destroy();
 ```
 
 Add matching markers to the rendered page:
@@ -80,9 +93,29 @@ Add matching markers to the rendered page:
 <p data-ve-id="home.hero.description">We help businesses grow.</p>
 <a data-ve-id="home.hero.cta" href="/contact">Get started</a>
 <img data-ve-id="home.hero.image" src="/images/hero.webp" alt="Team at work">
+
+<!-- Database-backed section with items -->
+<section data-ve-id="home.articles" class="articles-section">
+  <h2>Recent Articles</h2>
+  <div class="articles-grid">
+    <article data-ve-item-id="article-101" class="card">
+      <h3 data-ve-field="title">First Article</h3>
+      <p data-ve-field="summary">Summary of first article...</p>
+    </article>
+    <article data-ve-item-id="article-102" class="card">
+      <h3 data-ve-field="title">Second Article</h3>
+      <p data-ve-field="summary">Summary of second article...</p>
+    </article>
+  </div>
+</section>
 ```
 
-The selector must identify the intended element. IDs must be stable and unique within the page. For text and textarea fields, the SDK uses `textContent`, not HTML, so values cannot inject markup.
+### Data Fields & Database Views
+
+For `type: "data"` fields:
+- **Table Data List View**: When the section container (e.g. section title or padding) is clicked or selected, `CONTENT_SELECTED` is dispatched with `field.type = "data"`, `field.collection = "articles"`, and `field.items` containing the IDs of all rendered items. The parent visual editor can display a table of database records for this collection.
+- **Item Detail View**: When an individual card/item (`[data-ve-item-id]`) is clicked in the iframe, the child SDK dispatches `DATA_ITEM_SELECTED` with `itemId` and `field`. The parent editor displays the detail edit form for that specific record.
+- **Hierarchical Click Cycling**: Clicking a card selects the item first (detail view). Clicking the same item again cycles up to select the parent section (table view).
 
 ## 2. Parent editor: receive selection and update preview
 
@@ -105,8 +138,18 @@ window.addEventListener("message", (event: MessageEvent) => {
   }
 
   if (message.type === "CONTENT_SELECTED") {
-    // Open your editor panel using message.field.id/type/label/value.
-    console.log("Selected content", message.field);
+    if (message.field.type === "data" && !message.field.selectedItemId) {
+      // Open table data list from database for collection: message.field.collection
+      console.log("Display table list for collection:", message.field.collection, message.field.items);
+    } else {
+      // Scalar text/image/link field selected
+      console.log("Selected content", message.field);
+    }
+  }
+
+  if (message.type === "DATA_ITEM_SELECTED") {
+    // Open item detail view for message.itemId in collection message.field.collection
+    console.log("Display item detail for:", message.itemId, "in", message.field.collection);
   }
 
   if (message.type === "SDK_ERROR") {
@@ -117,6 +160,22 @@ window.addEventListener("message", (event: MessageEvent) => {
 function setEditMode(enabled: boolean) {
   iframe.contentWindow?.postMessage(
     { channel: "visual-editor-sdk", version: 1, type: "SET_EDIT_MODE", enabled },
+    previewOrigin
+  );
+}
+
+// Select a specific database item from the parent editor (e.g. clicking table row)
+function selectDataItem(fieldId: string, itemId: string) {
+  iframe.contentWindow?.postMessage(
+    { channel: "visual-editor-sdk", version: 1, type: "SELECT_DATA_ITEM", id: fieldId, itemId, scrollIntoView: true },
+    previewOrigin
+  );
+}
+
+// Preview changes on a data item
+function updateDataItemPreview(fieldId: string, itemId: string, fieldSelector: string, value: string) {
+  iframe.contentWindow?.postMessage(
+    { channel: "visual-editor-sdk", version: 1, type: "UPDATE_DATA_ITEM_PREVIEW", id: fieldId, itemId, fieldSelector, value },
     previewOrigin
   );
 }
@@ -152,16 +211,20 @@ All messages contain:
 
 Child → parent:
 - `EDITOR_READY`: site ID and registered fields currently found in the DOM.
-- `CONTENT_SELECTED`: selected field metadata and current value.
+- `CONTENT_SELECTED`: selected field metadata, current value, collection, and item list if `type: "data"`.
+- `DATA_ITEM_SELECTED`: emitted when an individual card/item in a `data` field is selected, including `itemId` and field metadata.
 - `PONG`: response to `PING`.
 - `SDK_ERROR`: an error message.
 
 Parent → child:
 - `PING`
-- `SET_EDIT_MODE`
-- `UPDATE_PREVIEW`
-- `RESTORE_PREVIEW`
+- `SET_EDIT_MODE`: `{ enabled: boolean }`
+- `UPDATE_PREVIEW`: `{ id: string, value: string }`
+- `RESTORE_PREVIEW`: `{ id: string }`
 - `RESTORE_ALL_PREVIEWS`
+- `SELECT_DATA_ITEM`: `{ id: string, itemId: string, scrollIntoView?: boolean }`
+- `UPDATE_DATA_ITEM_PREVIEW`: `{ id: string, itemId: string, fieldSelector?: string, attribute?: string, value: string }`
+- `RESTORE_DATA_ITEM_PREVIEW`: `{ id: string, itemId?: string }`
 
 ## Security notes
 
@@ -178,7 +241,7 @@ Parent → child:
 
 - Requires integration in the target website; cannot edit arbitrary third-party sites from a URL alone.
 - `UPDATE_PREVIEW` changes only the current DOM. It does not save data or guarantee that a framework-managed component will retain the update after re-render.
-- This initial version supports text, textarea, link and image attribute previews. Rich text, lists, components, authentication, persistence, publishing, undo/redo and responsive viewport controls are not included.
+- Supported field types are `text`, `textarea`, `link`, `image`, and `data` (database-backed sections and items). Rich text block editors and complex nested state management must be handled in your visual editor application.
 - For SPA sites, initialize after the page content is rendered and reinitialize or manage SDK lifecycle as routes change.
 - This package does not bypass browser same-origin restrictions or a website's iframe embedding policy.
 

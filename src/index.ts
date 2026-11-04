@@ -1,4 +1,5 @@
 import type {
+  DataItemSummary,
   EditableField,
   FieldPayload,
   VisualEditorSdk,
@@ -7,6 +8,7 @@ import type {
 import { isEditorMessage, makeFieldPayload, makeMessage } from "./protocol.js";
 
 export type {
+  DataItemSummary,
   EditableField,
   EditableFieldType,
   EditorToChildMessage,
@@ -18,6 +20,8 @@ export type {
 
 const DEFAULT_SELECTED_ATTRIBUTE = "data-ve-selected";
 const DEFAULT_EDIT_MODE_ATTRIBUTE = "data-ve-edit-mode";
+const DEFAULT_ITEM_SELECTOR = "[data-ve-item-id]";
+const DEFAULT_ITEM_ID_ATTRIBUTE = "data-ve-item-id";
 
 function normalizeOrigin(origin: string): string {
   let parsed: URL;
@@ -46,11 +50,20 @@ function validateFields(fields: EditableField[]): Map<string, EditableField> {
       throw new Error("Each editable field must have a non-empty id.");
     }
     if (map.has(field.id)) throw new Error(`Duplicate editable field id: ${field.id}`);
-    if (!["text", "textarea", "link", "image"].includes(field.type)) {
+    if (!["text", "textarea", "link", "image", "data"].includes(field.type)) {
       throw new Error(`Unsupported field type for "${field.id}".`);
     }
     if (field.selector && field.selector.length > 500) {
       throw new Error(`Selector is too long for "${field.id}".`);
+    }
+    if (field.collection !== undefined && (typeof field.collection !== "string" || field.collection.length > 200)) {
+      throw new Error(`Invalid collection for "${field.id}".`);
+    }
+    if (field.itemSelector !== undefined && (typeof field.itemSelector !== "string" || field.itemSelector.length > 500)) {
+      throw new Error(`Invalid itemSelector for "${field.id}".`);
+    }
+    if (field.itemIdAttribute !== undefined && (typeof field.itemIdAttribute !== "string" || field.itemIdAttribute.length > 100)) {
+      throw new Error(`Invalid itemIdAttribute for "${field.id}".`);
     }
     map.set(field.id, field);
   }
@@ -65,7 +78,56 @@ function safeQuery(root: ParentNode, selector: string): Element | null {
   }
 }
 
+function getItemSelector(field: EditableField): string {
+  return field.itemSelector ?? DEFAULT_ITEM_SELECTOR;
+}
+
+function getItemIdAttribute(field: EditableField): string {
+  return field.itemIdAttribute ?? DEFAULT_ITEM_ID_ATTRIBUTE;
+}
+
+function findItemElements(field: EditableField, container: Element): Element[] {
+  const selector = getItemSelector(field);
+  return Array.from(container.querySelectorAll(selector));
+}
+
+function findItems(field: EditableField, container: Element): DataItemSummary[] {
+  const idAttr = getItemIdAttribute(field);
+  const elements = findItemElements(field, container);
+  const items: DataItemSummary[] = [];
+
+  for (const el of elements) {
+    const id = el.getAttribute(idAttr);
+    if (!id) continue;
+    const label =
+      el.getAttribute("data-ve-label") ??
+      el.getAttribute("aria-label") ??
+      el.querySelector("[data-ve-field='title'], [data-ve-field='name'], h1, h2, h3, h4")?.textContent?.trim() ??
+      undefined;
+    items.push({ id, ...(label !== undefined ? { label } : {}) });
+  }
+
+  return items;
+}
+
+function findItemElement(field: EditableField, container: Element, itemId: string): Element | null {
+  const idAttr = getItemIdAttribute(field);
+  const selector = getItemSelector(field);
+  try {
+    const directMatch = container.querySelector(`${selector}[${CSS.escape(idAttr)}="${CSS.escape(itemId)}"]`);
+    if (directMatch) return directMatch;
+  } catch {
+    // fallback if selector escaping fails
+  }
+  const elements = findItemElements(field, container);
+  return elements.find((el) => el.getAttribute(idAttr) === itemId) ?? null;
+}
+
 function currentValue(element: Element, field: EditableField): string {
+  if (field.type === "data") {
+    const items = findItems(field, element);
+    return `${items.length} item${items.length === 1 ? "" : "s"}`;
+  }
   if (field.type === "link" || field.type === "image") {
     const attribute = field.attribute ?? (field.type === "link" ? "href" : "src");
     return element.getAttribute(attribute) ?? "";
@@ -76,6 +138,10 @@ function currentValue(element: Element, field: EditableField): string {
 function applyValue(element: Element, field: EditableField, value: string): void {
   if (field.maxLength !== undefined && value.length > field.maxLength) {
     throw new Error(`Value exceeds maxLength for "${field.id}".`);
+  }
+
+  if (field.type === "data") {
+    return;
   }
 
   if (field.type === "link" || field.type === "image") {
@@ -114,6 +180,9 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
 
   const originalValues = new Map<string, string>();
   const originalAttributes = new Map<string, string | null>();
+  const originalItemValues = new Map<string, string>();
+  const originalItemAttributes = new Map<string, string | null>();
+  const itemPreviewKeys = new Set<string>();
   const boundElements = new Map<string, Element>();
   const previousOutlineValues = new Map<Element, string | null>();
 
@@ -125,10 +194,14 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     return element;
   }
 
-  function payloadFor(field: EditableField): FieldPayload | null {
+  function payloadFor(field: EditableField, selectedItemId?: string | undefined): FieldPayload | null {
     const element = elementFor(field);
     if (!element) return null;
-    return makeFieldPayload(field, currentValue(element, field));
+    const items = field.type === "data" ? findItems(field, element) : undefined;
+    return makeFieldPayload(field, currentValue(element, field), {
+      selectedItemId,
+      items
+    });
   }
 
   function allPayloads(): FieldPayload[] {
@@ -157,16 +230,46 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     selectedElement = null;
   }
 
-  function selectField(field: EditableField): void {
-    const element = elementFor(field);
-    if (!element) return;
+  function selectField(field: EditableField, targetItemElement?: Element | null): void {
+    const container = elementFor(field);
+    if (!container) return;
     restoreSelectionOutline();
-    selectedElement = element;
-    previousOutlineValues.set(element, element.getAttribute(selectedAttribute));
-    element.setAttribute(selectedAttribute, "true");
-    const payload = makeFieldPayload(field, currentValue(element, field));
+
+    if (targetItemElement && field.type === "data") {
+      selectedElement = targetItemElement;
+      previousOutlineValues.set(targetItemElement, targetItemElement.getAttribute(selectedAttribute));
+      targetItemElement.setAttribute(selectedAttribute, "true");
+
+      const itemId = targetItemElement.getAttribute(getItemIdAttribute(field)) ?? "";
+      const payload = makeFieldPayload(field, currentValue(container, field), {
+        selectedItemId: itemId,
+        items: findItems(field, container)
+      });
+
+      options.onSelectItem?.(field, itemId, targetItemElement);
+      options.onSelect?.(field, payload.value, { itemId });
+      send(makeMessage("DATA_ITEM_SELECTED", { siteId: options.siteId, field: payload, itemId }));
+      send(makeMessage("CONTENT_SELECTED", { siteId: options.siteId, field: payload }));
+      return;
+    }
+
+    selectedElement = container;
+    previousOutlineValues.set(container, container.getAttribute(selectedAttribute));
+    container.setAttribute(selectedAttribute, "true");
+
+    const payload = makeFieldPayload(field, currentValue(container, field), {
+      items: field.type === "data" ? findItems(field, container) : undefined
+    });
+
     options.onSelect?.(field, payload.value);
     send(makeMessage("CONTENT_SELECTED", { siteId: options.siteId, field: payload }));
+  }
+
+  interface ClickCandidate {
+    field: EditableField;
+    element: Element;
+    isItem: boolean;
+    itemElement?: Element | undefined;
   }
 
   function handleClick(event: MouseEvent): void {
@@ -180,11 +283,23 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
           : null;
     if (!target) return;
 
-    const candidates: { field: EditableField; element: Element }[] = [];
+    const candidates: ClickCandidate[] = [];
+
     for (const field of fieldsById.values()) {
-      const element = elementFor(field);
-      if (element && (element === target || element.contains(target))) {
-        candidates.push({ field, element });
+      const container = elementFor(field);
+      if (!container) continue;
+
+      if (container === target || container.contains(target)) {
+        if (field.type === "data") {
+          const itemSelector = getItemSelector(field);
+          const itemElement = target.closest(itemSelector);
+          if (itemElement && container.contains(itemElement)) {
+            candidates.push({ field, element: itemElement, isItem: true, itemElement });
+          }
+          candidates.push({ field, element: container, isItem: false });
+        } else {
+          candidates.push({ field, element: container, isItem: false });
+        }
       }
     }
 
@@ -195,7 +310,9 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
 
     if (candidates.length > 1) {
       candidates.sort((a, b) => {
-        if (a.element === b.element) return 0;
+        if (a.element === b.element) {
+          return a.isItem ? -1 : 1;
+        }
         if (a.element.contains(b.element)) return 1;
         if (b.element.contains(a.element)) return -1;
         return 0;
@@ -206,7 +323,51 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % candidates.length : 0;
     const match = candidates[nextIndex];
     if (match) {
-      selectField(match.field);
+      if (match.isItem && match.itemElement) {
+        selectField(match.field, match.itemElement);
+      } else {
+        selectField(match.field, null);
+      }
+    }
+  }
+
+  function restoreDataItemPreviews(fieldId: string, itemId?: string | undefined): void {
+    const field = fieldsById.get(fieldId);
+    if (!field || field.type !== "data") return;
+    const container = boundElements.get(fieldId) ?? elementFor(field);
+    if (!container) return;
+
+    const prefix = itemId ? `${fieldId}::${itemId}::` : `${fieldId}::`;
+
+    for (const key of [...itemPreviewKeys]) {
+      if (!key.startsWith(prefix)) continue;
+      const parts = key.split("::");
+      const targetItemId = parts[1];
+      if (!targetItemId) continue;
+      const fieldSelector = parts[2];
+      const attribute = parts[3];
+
+      const itemEl = findItemElement(field, container, targetItemId);
+      if (!itemEl) continue;
+      const targetEl = fieldSelector ? safeQuery(itemEl, fieldSelector) : itemEl;
+      if (!targetEl) continue;
+
+      if (attribute) {
+        const origAttr = originalItemAttributes.get(key);
+        if (origAttr === null || origAttr === undefined) {
+          targetEl.removeAttribute(attribute);
+        } else {
+          targetEl.setAttribute(attribute, origAttr);
+        }
+        originalItemAttributes.delete(key);
+      } else {
+        const origText = originalItemValues.get(key);
+        if (origText !== undefined) {
+          targetEl.textContent = origText;
+        }
+        originalItemValues.delete(key);
+      }
+      itemPreviewKeys.delete(key);
     }
   }
 
@@ -249,7 +410,56 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
           break;
         case "RESTORE_ALL_PREVIEWS":
           for (const id of originalValues.keys()) restoreOne(id);
+          for (const id of fieldsById.keys()) restoreDataItemPreviews(id);
           break;
+        case "SELECT_DATA_ITEM": {
+          const field = fieldsById.get(message.id);
+          if (!field) throw new Error(`Unknown field id: ${message.id}`);
+          if (field.type !== "data") throw new Error(`Field "${message.id}" is not of type "data".`);
+          const container = elementFor(field);
+          if (!container) throw new Error(`Element not found for field: ${message.id}`);
+          const itemEl = findItemElement(field, container, message.itemId);
+          if (!itemEl) throw new Error(`Item "${message.itemId}" not found in field "${message.id}".`);
+          selectField(field, itemEl);
+          if (message.scrollIntoView !== false && typeof itemEl.scrollIntoView === "function") {
+            itemEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+          break;
+        }
+        case "UPDATE_DATA_ITEM_PREVIEW": {
+          const field = fieldsById.get(message.id);
+          if (!field) throw new Error(`Unknown field id: ${message.id}`);
+          if (field.type !== "data") throw new Error(`Field "${message.id}" is not of type "data".`);
+          const container = elementFor(field);
+          if (!container) throw new Error(`Element not found for field: ${message.id}`);
+          const itemEl = findItemElement(field, container, message.itemId);
+          if (!itemEl) throw new Error(`Item "${message.itemId}" not found in field "${message.id}".`);
+
+          const targetEl = message.fieldSelector ? safeQuery(itemEl, message.fieldSelector) : itemEl;
+          if (!targetEl) throw new Error(`Target element "${message.fieldSelector}" not found in item "${message.itemId}".`);
+
+          const key = `${message.id}::${message.itemId}::${message.fieldSelector ?? ""}::${message.attribute ?? ""}`;
+          if (!itemPreviewKeys.has(key)) {
+            itemPreviewKeys.add(key);
+            if (message.attribute) {
+              originalItemAttributes.set(key, targetEl.getAttribute(message.attribute));
+            } else {
+              originalItemValues.set(key, targetEl.textContent ?? "");
+            }
+          }
+
+          if (message.attribute) {
+            targetEl.setAttribute(message.attribute, message.value);
+          } else {
+            targetEl.textContent = message.value;
+          }
+          options.onPreviewUpdate?.(field, message.value);
+          break;
+        }
+        case "RESTORE_DATA_ITEM_PREVIEW": {
+          restoreDataItemPreviews(message.id, message.itemId);
+          break;
+        }
       }
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error("Unknown SDK error");
@@ -316,6 +526,17 @@ export function initVisualEditor(options: VisualEditorSdkOptions): VisualEditorS
     },
     restoreAllPreviews() {
       for (const id of [...originalValues.keys()]) restoreOne(id);
+      for (const id of fieldsById.keys()) restoreDataItemPreviews(id);
+    },
+    selectDataItem(fieldId: string, itemId: string) {
+      const field = fieldsById.get(fieldId);
+      if (!field) throw new Error(`Unknown field id: ${fieldId}`);
+      if (field.type !== "data") throw new Error(`Field "${fieldId}" is not of type "data".`);
+      const container = elementFor(field);
+      if (!container) throw new Error(`Element not found for field: ${fieldId}`);
+      const itemEl = findItemElement(field, container, itemId);
+      if (!itemEl) throw new Error(`Item "${itemId}" not found in field "${fieldId}".`);
+      selectField(field, itemEl);
     },
     getFields() {
       return allPayloads();

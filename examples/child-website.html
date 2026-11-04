@@ -6,10 +6,14 @@
   <title>Example child website</title>
   <style>
     body { font: 16px/1.6 system-ui, sans-serif; max-width: 900px; margin: 4rem auto; padding: 0 1rem; }
-    [data-ve-id] { transition: outline-color .12s ease; }
-    [data-ve-edit-mode] [data-ve-id] { cursor: pointer; outline: 1px dashed transparent; outline-offset: 5px; }
-    [data-ve-edit-mode] [data-ve-id]:hover { outline-color: #6478f7; }
+    [data-ve-id], [data-ve-item-id] { transition: outline-color .12s ease; }
+    [data-ve-edit-mode] [data-ve-id],
+    [data-ve-edit-mode] [data-ve-item-id] { cursor: pointer; outline: 1px dashed transparent; outline-offset: 5px; }
+    [data-ve-edit-mode] [data-ve-id]:hover,
+    [data-ve-edit-mode] [data-ve-item-id]:hover { outline-color: #6478f7; }
     [data-ve-selected] { outline: 2px solid #6478f7 !important; outline-offset: 5px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+    .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; background: #fafafa; }
   </style>
 </head>
 <body>
@@ -17,7 +21,66 @@
     <h1 data-ve-id="home.hero.title">Build Better Digital Experiences</h1>
     <p data-ve-id="home.hero.description">A sample website embedded in the visual editor.</p>
     <a data-ve-id="home.hero.cta" href="/contact">Contact us</a>
+
+    <!-- Database-backed Article Section (type: "data") -->
+    <section data-ve-id="home.articles" class="articles-section" style="margin-top: 3rem;">
+      <h2>Latest Articles</h2>
+      <div class="grid">
+        <article data-ve-item-id="art-1" class="card">
+          <h3 data-ve-field="title">Getting Started with Visual Editing</h3>
+          <p data-ve-field="summary">Learn how to connect iframe sites to your parent CMS.</p>
+          <a data-ve-field="link" href="/articles/getting-started">Read Article</a>
+        </article>
+        <article data-ve-item-id="art-2" class="card">
+          <h3 data-ve-field="title">Database-Driven Previews</h3>
+          <p data-ve-field="summary">Select sections to see database tables, click cards for item details.</p>
+          <a data-ve-field="link" href="/articles/database-previews">Read Article</a>
+        </article>
+      </div>
+    </section>
+
+    <!-- Database-backed Pricing Plans Section (type: "data") -->
+    <section data-ve-id="home.plans" class="plans-section" style="margin-top: 3rem;">
+      <h2>Pricing Plans</h2>
+      <div class="grid">
+        <div data-ve-item-id="plan-starter" class="card">
+          <h3 data-ve-field="name">Starter</h3>
+          <p data-ve-field="price"><strong>$19 / mo</strong></p>
+          <p data-ve-field="description">For individuals and side projects.</p>
+        </div>
+        <div data-ve-item-id="plan-pro" class="card">
+          <h3 data-ve-field="name">Pro</h3>
+          <p data-ve-field="price"><strong>$49 / mo</strong></p>
+          <p data-ve-field="description">For growing teams and businesses.</p>
+        </div>
+      </div>
+    </section>
   </main>
-  <p><strong>Demo note:</strong> This HTML is a markup example. Bundle/import the SDK from your own TypeScript app using the README instructions.</p>
+
+  <p style="margin-top: 3rem;"><strong>Demo note:</strong> Bundle/import the SDK from your TypeScript application:</p>
+  <pre style="background: #f1f5f9; padding: 1rem; border-radius: 6px; overflow-x: auto;"><code>import { initVisualEditor } from "visual-editor-sdk";
+
+initVisualEditor({
+  siteId: "my-site",
+  editorOrigin: "https://editor.example.com",
+  fields: [
+    { id: "home.hero.title", type: "text", label: "Hero Title" },
+    {
+      id: "home.articles",
+      type: "data",
+      label: "Articles Section",
+      collection: "articles"
+    },
+    {
+      id: "home.plans",
+      type: "data",
+      label: "Pricing Plans",
+      collection: "plans"
+    }
+  ],
+  onSelectItem(field, itemId, element) {
+    console.log("Selected item:", itemId, "in", field.id);
+  }
+});</code></pre>
 </body>
 </html>

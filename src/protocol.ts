@@ -1,5 +1,6 @@
 import type {
   ChildToEditorMessage,
+  DataItemSummary,
   EditorToChildMessage,
   FieldPayload
 } from "./types.js";
@@ -25,6 +26,28 @@ export function isEditorMessage(value: unknown): value is EditorToChildMessage {
       return typeof value.id === "string" && typeof value.value === "string";
     case "RESTORE_PREVIEW":
       return typeof value.id === "string";
+    case "SELECT_DATA_ITEM":
+      return (
+        typeof value.id === "string" &&
+        typeof value.itemId === "string" &&
+        (value.scrollIntoView === undefined || typeof value.scrollIntoView === "boolean")
+      );
+    case "UPDATE_DATA_ITEM_PREVIEW":
+      return (
+        typeof value.id === "string" &&
+        typeof value.itemId === "string" &&
+        typeof value.value === "string" &&
+        (value.fieldSelector === undefined || typeof value.fieldSelector === "string") &&
+        (value.attribute === undefined ||
+          value.attribute === "href" ||
+          value.attribute === "src" ||
+          value.attribute === "alt")
+      );
+    case "RESTORE_DATA_ITEM_PREVIEW":
+      return (
+        typeof value.id === "string" &&
+        (value.itemId === undefined || typeof value.itemId === "string")
+      );
     default:
       return false;
   }
@@ -43,13 +66,24 @@ export function makeMessage<T extends ChildToEditorMessage["type"]>(
 }
 
 export function makeFieldPayload(
-  field: { id: string; type: FieldPayload["type"]; label?: string },
-  value: string
+  field: { id: string; type: FieldPayload["type"]; label?: string | undefined; collection?: string | undefined },
+  value: string,
+  extras?: { selectedItemId?: string | undefined; items?: DataItemSummary[] | undefined } | undefined
 ): FieldPayload {
-  return {
+  const payload: FieldPayload = {
     id: field.id,
     type: field.type,
     label: field.label ?? field.id,
     value
   };
+  if (field.collection !== undefined) {
+    payload.collection = field.collection;
+  }
+  if (extras?.selectedItemId !== undefined) {
+    payload.selectedItemId = extras.selectedItemId;
+  }
+  if (extras?.items !== undefined) {
+    payload.items = extras.items;
+  }
+  return payload;
 }
